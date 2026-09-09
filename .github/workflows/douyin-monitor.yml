@@ -1,0 +1,65 @@
+name: 抖音作品监控
+
+on:
+  # 每小时检测一次 (cron 使用 UTC, 对应北京时间每小时一次)
+  schedule:
+    - cron: '0 * * * *'
+  # 支持手动触发
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # 1. 检出代码 (含 known_videos.json 状态文件)
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # 2. 设置 Python
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 3. 安装依赖
+      - name: 安装依赖
+        run: |
+          pip install httpx pyyaml
+          python -c "import httpx; print('httpx', httpx.__version__)"
+
+      # 4. 执行监控
+      - name: 执行监控检测
+        env:
+          DOUYIN_COOKIE: ${{ secrets.DOUYIN_COOKIE }}
+          USER_SEC_UID: ${{ secrets.USER_SEC_UID }}
+          USER_NAME: ${{ secrets.USER_NAME }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python monitor.py --ci | tee monitor_output.txt
+
+      # 5. 上传监控日志 (便于排查)
+      - name: 上传监控日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitor-log
+          path: |
+            monitor_output.txt
+            known_videos.json
+          if-no-files-found: ignore
+
+      # 6. 提交状态文件回仓库 (保持检测状态跨运行)
+      - name: 提交检测状态
+        if: always()
+        run: |
+          git config user.name "douyin-monitor-bot"
+          git config user.email "douyin-monitor-bot@users.noreply.github.com"
+          git add known_videos.json
+          git diff --cached --quiet || git commit -m "chore: 更新检测状态 $(date -u +'%Y-%m-%d %H:%M' UTC)"
+          git push

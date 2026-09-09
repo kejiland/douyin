@@ -1,0 +1,31 @@
+# ============================================
+#  Git 忽略文件 — 防止敏感信息泄露!
+# ============================================
+
+# 配置文件 (含抖音 Cookie / Telegram Token, 绝不上传)
+config.yaml
+config.yaml.bak
+
+# 本地状态 (注意: known_videos.json 需要提交到仓库以在 CI 间持久化!)
+known_videos.db
+data/
+logs/
+downloads/
+screenshots/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# 密钥/临时文件
+*.key
+*.pem
+.env
+cookie_input.py
+
+# 日志
+*.log

@@ -126,13 +126,30 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 POST_URL = "https://www.douyin.com/aweme/v1/web/aweme/post/"
 
 
+def clean_cookie(cookie):
+    """
+    清洗 Cookie 字符串中的非法字符。
+
+    问题背景: GitHub Secrets 粘贴 Cookie 时可能带入换行/制表符等,
+    HTTP 头不允许这些字符, 会导致 "Illegal header value" 错误。
+
+    处理: 去掉所有控制字符和空白, 保留 ';' 分隔的 key=value 对。
+    """
+    if not cookie:
+        return ""
+    # 去掉换行/回车/制表符等控制字符
+    cleaned = ''.join(ch for ch in cookie if ch >= ' ')
+    # 若被 Secrets 打码成 *** 等异常值则原样返回 (调用方会校验)
+    return cleaned.strip()
+
+
 def _hdrs(cookie):
     return {
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         "User-Agent": UA,
         "Referer": "https://www.douyin.com/",
-        "Cookie": cookie,
+        "Cookie": clean_cookie(cookie),
     }
 
 
@@ -464,9 +481,17 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config()
-    cookie = cfg["douyin"]["cookie"]
+    cookie = clean_cookie(cfg["douyin"]["cookie"])
     if not cookie:
         print("[!] 未配置抖音 cookie（环境变量 DOUYIN_COOKIE 或 config.yaml）")
+        sys.exit(1)
+    if len(cookie) < 50:
+        print("[!] 抖音 Cookie 内容异常过短，请检查 Secret 是否配置正确")
+        print("    获取方式: 浏览器登录 douyin.com → F12 → Network → 复制 Cookie")
+        sys.exit(1)
+    if "=" not in cookie or ";" not in cookie:
+        print("[!] 抖音 Cookie 格式异常（应包含多个 key=value; ... 对）")
+        print("    请重新从浏览器复制完整的 Cookie 字符串")
         sys.exit(1)
 
     users = [u for u in cfg["douyin"].get("users", []) if u.get("sec_uid")]

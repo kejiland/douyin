@@ -188,6 +188,7 @@ def fetch_videos(cookie, sec_uid, count=50):
                         "duration": dur,
                         "cover": covers[0] if covers else "",
                         "play_url": play,
+                        "create_time": item.get("create_time", 0),
                     })
                 return videos, ""
             return [], f"status_code={data.get('status_code')}: {data.get('status_msg', '')}"
@@ -420,51 +421,72 @@ def check_all(cfg, state, mark_known_only=False):
             print(f"  ⚠️ 未获取到作品")
             continue
 
-        new_count = 0
-        for v in videos:
-            aid = v["aweme_id"]
-            # 注意: 不能遇到已知作品就 break!
-            # 抖音会把"置顶"作品放在列表最前, 列表并非严格按时间排序,
-            # 若在最前的置顶作品处 break, 会漏掉后面真正的新作品。
-            if aid in state:
-                continue
-            new_count += 1
+        # 收集所有新作品 (不在 known_videos.json 中的)
+        # 注意: 不能遇到已知作品就 break! 抖音会把"置顶"作品放在列表最前,
+        # 列表并非严格按时间排序, 若在最前的置顶作品处 break, 会漏掉后面真正的新作品。
+        new_videos = [v for v in videos if v["aweme_id"] not in state]
+        total_new += len(new_videos)
 
-            no_wm = v.get("play_url", "")
-            if not no_wm:
-                # 列表里没地址时用详情接口
-                from urllib.parse import urlencode as _ue
-                params = {"device_platform": "webapp", "aid": "6383",
-                          "aweme_id": aid, "version_code": "170400", "version_name": "17.4.0"}
-                durl = "https://www.douyin.com/aweme/v1/web/aweme/detail/?" + _ue(params)
-                try:
-                    r = httpx.get(sign_url(durl, UA), headers=_hdrs(cookie), timeout=20)
-                    detail = r.json().get("aweme_detail", {}) or {}
-                    for key in ("play_addr", "download_addr"):
-                        ul = detail.get("video", {}).get(key, {}).get("url_list", [])
-                        if ul:
-                            no_wm = ul[0].replace("playwm", "play").replace("/playwm/", "/play/")
-                            break
-                except Exception:
-                    pass
-
-            # 通知
-            if not mark_known_only:
-                print(f"  🆕 {v['title'][:50]}  (时长{v['duration']}秒)")
-                if no_wm:
-                    print(f"     ⬇️ {no_wm[:120]}")
-                notify(cfg["notification"]["telegram"].get("bot_token", ""),
-                       cfg["notification"]["telegram"].get("chat_id", ""),
-                       v, no_wm, user_info)
-
-            # 记录 (仅作品 ID, 无隐私数据)
-            state.add(aid)
-
-        total_new += new_count
-        if new_count == 0:
+        if not new_videos:
             print(f"  ✅ 暂无新作品（本次获取 {len(videos)} 个作品均已知）")
+            time.sleep(3)
+            continue
+
+        # 锚点: 当前最新视频 = known_videos.json 中 create_time / aweme_id 最大者
+        # (aweme_id 随发布时间递增, 置顶作品不影响; create_time 为权威时间)
+        if state:
+            anchor_id = max(state, key=lambda x: int(x))
+            anchor = next((v for v in videos if v["aweme_id"] == anchor_id), None)
+            if anchor:
+                from datetime import datetime as _dt
+                ts = anchor.get("create_time") or 0
+                ts_str = _dt.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "未知"
+                print(f"    锚点(当前最新作品): {anchor_id}  发布于 {ts_str}")
+            else:
+                print(f"    锚点(当前最新作品): {anchor_id}")
+
+        # 只通知"比锚点更新的最新 1 条":
+        # 作者同一时段发布多条时, 只推送最新那一条, 其余静默记录,
+        # 避免一次收到一堆重复推送 (以 create_time 为准, aweme_id 兜底)。
+        newest = max(new_videos, key=lambda v: (v.get("create_time") or 0, int(v["aweme_id"])))
+
+        no_wm = newest.get("play_url", "")
+        if not no_wm:
+            # 列表里没地址时用详情接口
+            from urllib.parse import urlencode as _ue
+            params = {"device_platform": "webapp", "aid": "6383",
+                      "aweme_id": newest["aweme_id"], "version_code": "170400", "version_name": "17.4.0"}
+            durl = "https://www.douyin.com/aweme/v1/web/aweme/detail/?" + _ue(params)
+            try:
+                r = httpx.get(sign_url(durl, UA), headers=_hdrs(cookie), timeout=20)
+                detail = r.json().get("aweme_detail", {}) or {}
+                for key in ("play_addr", "download_addr"):
+                    ul = detail.get("video", {}).get(key, {}).get("url_list", [])
+                    if ul:
+                        no_wm = ul[0].replace("playwm", "play").replace("/playwm/", "/play/")
+                        break
+            except Exception:
+                pass
+
+        if not mark_known_only:
+            # 通知 (仅最新 1 条)
+            print(f"  🆕 {newest['title'][:50]}  (时长{newest['duration']}秒)")
+            if no_wm:
+                print(f"     ⬇️ {no_wm[:120]}")
+            notify(cfg["notification"]["telegram"].get("bot_token", ""),
+                   cfg["notification"]["telegram"].get("chat_id", ""),
+                   newest, no_wm, user_info)
+            if len(new_videos) > 1:
+                print(f"  🎉 发现 {len(new_videos)} 个新作品，已通知最新 1 条"
+                      f"（其余 {len(new_videos)-1} 条静默记录，不再推送）")
+            else:
+                print("  🎉 发现 1 个新作品")
         else:
-            print(f"  🎉 发现 {new_count} 个新作品（本次获取 {len(videos)} 个作品）")
+            print(f"  📦 基线模式：记录 {len(new_videos)} 个新作品（不通知）")
+
+        # 记录所有新作品 (仅最新 1 条会通知, 其余静默入库, 锚点自动推进到最新)
+        for v in new_videos:
+            state.add(v["aweme_id"])
 
         time.sleep(3)
     return total_new

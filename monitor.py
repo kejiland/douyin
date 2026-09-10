@@ -153,7 +153,7 @@ def _hdrs(cookie):
     }
 
 
-def fetch_videos(cookie, sec_uid, count=20):
+def fetch_videos(cookie, sec_uid, count=50):
     """获取用户作品列表。返回 (videos, error_message)"""
     params = {
         "device_platform": "webapp", "aid": "6383",
@@ -423,8 +423,11 @@ def check_all(cfg, state, mark_known_only=False):
         new_count = 0
         for v in videos:
             aid = v["aweme_id"]
+            # 注意: 不能遇到已知作品就 break!
+            # 抖音会把"置顶"作品放在列表最前, 列表并非严格按时间排序,
+            # 若在最前的置顶作品处 break, 会漏掉后面真正的新作品。
             if aid in state:
-                break
+                continue
             new_count += 1
 
             no_wm = v.get("play_url", "")
@@ -459,9 +462,9 @@ def check_all(cfg, state, mark_known_only=False):
 
         total_new += new_count
         if new_count == 0:
-            print(f"  ✅ 暂无新作品（共 {len(videos)} 个作品均已知）")
+            print(f"  ✅ 暂无新作品（本次获取 {len(videos)} 个作品均已知）")
         else:
-            print(f"  🎉 发现 {new_count} 个新作品")
+            print(f"  🎉 发现 {new_count} 个新作品（本次获取 {len(videos)} 个作品）")
 
         time.sleep(3)
     return total_new
